@@ -1,0 +1,6 @@
+{
+  "name": "@deepseek/windows-desktop",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "main.js"
+}

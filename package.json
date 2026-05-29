@@ -1,0 +1,19 @@
+{
+  "name": "deepseekdesktop-rubbish",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Unfinished DeepSeek Windows desktop/CLI prototype with known reasoning and UX defects.",
+  "type": "module",
+  "scripts": {
+    "cli": "node packages/cli/bin/deepseek.js",
+    "desktop": "electron packages/desktop/main.js",
+    "desktop:electron": "electron packages/desktop/main.js",
+    "desktop:tauri": "npm --prefix packages/desktop-tauri run tauri dev",
+    "build:tauri": "npm --prefix packages/desktop-tauri run tauri build",
+    "installer": "powershell -ExecutionPolicy Bypass -File installer/build-iexpress.ps1"
+  },
+  "dependencies": {
+    "electron": "^35.0.0"
+  },
+  "devDependencies": {}
+}

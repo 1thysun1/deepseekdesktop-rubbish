@@ -1,0 +1,11 @@
+{
+  "name": "@deepseek/windows-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "deepseek": "bin/deepseek.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
