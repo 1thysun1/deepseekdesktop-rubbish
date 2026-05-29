@@ -1,8 +1,8 @@
 $ErrorActionPreference = "Stop"
 
 $SourceRoot = Split-Path -Parent $PSScriptRoot
-if (!(Test-Path (Join-Path $SourceRoot "packages\cli\bin\deepseek.js")) -and (Test-Path "D:\deepseek\packages\cli\bin\deepseek.js")) {
-  $SourceRoot = "D:\deepseek"
+if (!(Test-Path (Join-Path $SourceRoot "packages\cli\bin\deepseek.js")) -and (Test-Path "D:\deepseekdesktop\packages\cli\bin\deepseek.js")) {
+  $SourceRoot = "D:\deepseekdesktop"
 }
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\DeepSeekWindows"
 $BinDir = Join-Path $InstallDir "bin"

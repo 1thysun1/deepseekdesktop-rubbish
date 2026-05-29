@@ -6,6 +6,18 @@
 
 `deepseekdesktop` is an experimental Windows desktop + CLI wrapper around the DeepSeek OpenAI-compatible API.
 
+## Screenshots
+
+These screenshots are captured from a sanitized demo run. They show the rough UI state only; they do not imply that the underlying features are complete.
+
+![Chat home](docs/screenshots/01-chat-home.png)
+
+![Plugin page](docs/screenshots/02-plugins.png)
+
+![Settings page](docs/screenshots/03-settings.png)
+
+![Composer menu](docs/screenshots/04-composer-menu.png)
+
 The UI interface is basically designed:
 
 - desktop shell

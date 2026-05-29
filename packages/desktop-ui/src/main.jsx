@@ -50,7 +50,7 @@ function Sidebar({ closed, page, setPage, threads, archived, activeThread, selec
         ))}
       </nav>
       <div className="sectionTitle">项目</div>
-      <button className="project"><Folder size={17} /><span>D:\deepseek</span></button>
+      <button className="project"><Folder size={17} /><span>D:\project</span></button>
       <div className="sectionTitle">对话</div>
       <div className="threadList">
         {threads.map(t => (

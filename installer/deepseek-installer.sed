@@ -13,7 +13,7 @@ RebootMode=N
 InstallPrompt=
 DisplayLicense=
 FinishMessage=DeepSeek Windows installed.
-TargetName=D:\deepseek\dist\DeepSeek Installer.exe
+TargetName=D:\deepseekdesktop\dist\DeepSeek Installer.exe
 FriendlyName=DeepSeek Installer
 AppLaunched=powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File install.ps1
 PostInstallCmd=<None>
@@ -21,7 +21,7 @@ AdminQuietInstCmd=
 UserQuietInstCmd=
 SourceFiles=SourceFiles
 [SourceFiles]
-SourceFiles0=D:\deepseek\installer
+SourceFiles0=D:\deepseekdesktop\installer
 [SourceFiles0]
 %FILE0%=
 [Strings]

@@ -34,7 +34,7 @@ function Sidebar({ collapsed, active, onNavigate }) {
       </nav>
       <section>
         <h4>项目</h4>
-        <button className="project"><Folder size={16} /><span>D:\deepseek</span></button>
+        <button className="project"><Folder size={16} /><span>D:\project</span></button>
       </section>
       <section>
         <h4>对话</h4>
