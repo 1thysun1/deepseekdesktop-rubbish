@@ -75,5 +75,39 @@ button { border: 0; background: transparent; cursor: default; }
 .card { border: 1px solid var(--border); background: var(--surface); border-radius: 16px; padding: 18px; }
 .card button { height: 38px; border-radius: 12px; padding: 0 12px; background: var(--surface2); margin: 4px; }
 pre { overflow: auto; white-space: pre-wrap; }
+.md p { margin: 0 0 12px; }
+.md code { font-family: Consolas, "Cascadia Mono", monospace; font-size: .92em; background: var(--surface2); border: 1px solid var(--border); padding: 1px 5px; border-radius: 6px; white-space: normal; word-break: break-word; }
+.md .code-block { margin: 14px 0; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: color-mix(in srgb, var(--surface2) 78%, black); }
+.md .code-head { height: 34px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px 0 13px; color: var(--muted); border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 80%, transparent); font-size: 12px; }
+.md .code-head button { border: 1px solid var(--border); border-radius: 8px; padding: 3px 8px; color: var(--muted); height: auto; background: transparent; margin: 0; }
+.md .code-head button:hover { color: var(--text); background: var(--surface2); }
+.md .code-block code { display: block; padding: 14px; overflow: auto; white-space: pre; border: 0; background: transparent; font-size: 13px; line-height: 1.55; }
+.md h1, .md h2, .md h3 { margin: 22px 0 10px; line-height: 1.25; }
+.md h1 { font-size: 25px; }
+.md h2 { font-size: 21px; }
+.md h3 { font-size: 17px; }
+.md li { margin: 5px 0; }
+.md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid var(--border); color: var(--muted); background: color-mix(in srgb, var(--surface) 55%, transparent); border-radius: 0 10px 10px 0; }
+.md hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
+.toolPanel { display: flex; flex-direction: column; height: 100%; color: var(--text); }
+.toolPanel .toolsBar { display: flex; gap: 8px; margin-bottom: 12px; }
+.toolPanel .toolsBar button { height: 32px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; background: var(--surface2); }
+.toolPanel .toolsBar button:disabled { opacity: .45; }
+.toolPanel .toolCwd { color: var(--muted); font-size: 12px; font-family: Consolas, monospace; margin-bottom: 8px; }
+.toolPanel .toolRow button { width: 100%; text-align: left; padding: 7px 8px; border-radius: 8px; }
+.toolPanel .toolRow button:hover { background: var(--surface2); }
+.toolPanel .error { color: #ff8a80; }
+.termScreen { flex: 1; min-height: 0; margin: 0; padding: 12px; overflow: auto; background: #050505; color: #d8d8d8; font: 12px/1.45 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; }
+.termBar { display: flex; gap: 8px; padding: 8px; border-top: 1px solid var(--border); }
+.termBar input { flex: 1; height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text); font-family: Consolas, monospace; }
+.termBar button { height: 34px; border: 1px solid var(--border); border-radius: 8px; padding: 0 12px; background: var(--surface2); }
+.browserFrame { flex: 1; min-height: 0; border: 0; background: var(--bg); }
+.toolTextarea { width: 100%; min-height: 90px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface2); color: var(--text); resize: vertical; margin-bottom: 8px; }
+.toolOutput { max-height: 420px; overflow: auto; white-space: pre-wrap; border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); color: var(--muted); font-family: Consolas, monospace; font-size: 12px; margin-top: 8px; }
+.memoryList { display: grid; gap: 8px; margin-top: 10px; }
+.memoryItem { border: 1px solid var(--border); border-radius: 12px; padding: 10px; }
+.memoryItem strong { display: block; margin-bottom: 4px; }
+.memoryItem p { margin: 0; color: var(--muted); white-space: pre-wrap; }
+.primary { background: var(--text); color: var(--bg); padding: 7px 12px; border-radius: 8px; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }

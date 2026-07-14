@@ -4,7 +4,10 @@ contextBridge.exposeInMainWorld("deepseek", {
   config: {
     get: () => ipcRenderer.invoke("config:get"),
     save: (patch) => ipcRenderer.invoke("config:save", patch),
-    path: () => ipcRenderer.invoke("config:path")
+    path: () => ipcRenderer.invoke("config:path"),
+    home: () => ipcRenderer.invoke("config:home"),
+    plugins: () => ipcRenderer.invoke("config:plugins"),
+    skills: () => ipcRenderer.invoke("config:skills")
   },
   sessions: {
     list: () => ipcRenderer.invoke("sessions:list"),
@@ -29,7 +32,9 @@ contextBridge.exposeInMainWorld("deepseek", {
   },
   agent: {
     run: (payload) => ipcRenderer.invoke("agent:run", payload),
-    onStatus: (callback) => ipcRenderer.on("agent:status", (_event, payload) => callback(payload))
+    runStream: (payload) => ipcRenderer.invoke("agent:run-stream", payload),
+    onStatus: (callback) => ipcRenderer.on("agent:status", (_event, payload) => callback(payload)),
+    onChunk: (callback) => ipcRenderer.on("agent:chunk", (_event, payload) => callback(payload))
   },
   files: {
     list: (dir) => ipcRenderer.invoke("files:list", dir),

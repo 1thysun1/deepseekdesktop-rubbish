@@ -1217,8 +1217,13 @@
             </div>
             <div class="card" data-setting-panel="mcp">
               <h3>MCP 服务器</h3>
-              <p class="status">预留 MCP/插件运行时配置。后续会从 <span class="mono">~\\.deepseek\\mcp.json</span> 和 <span class="mono">~\\.deepseek\\plugins</span> 读取服务定义。</p>
-              <button id="openMcpFolder">打开配置目录</button>
+              <p class="status">MCP（模型上下文协议）服务器管理。配置存储在 <span class="mono">~\\.deepseek\\mcp.json</span>。</p>
+              <label>服务器名称 <input id="mcpName" placeholder="例如：filesystem-server"></label>
+              <label>启动命令 <input id="mcpCommand" placeholder="例如：npx @deepseek/mcp-filesystem"></label>
+              <label>参数 <input id="mcpArgs" placeholder="用空格分隔的参数"></label>
+              <div class="tools"><button id="saveMcp" class="primary">添加服务器</button><button id="refreshMcp">刷新</button><button id="openMcpFolder">打开配置目录</button></div>
+              <p id="mcpStatus" class="status"></p>
+              <div id="mcpList" class="memory-list"></div>
             </div>
             <div class="card" data-setting-panel="archive">
               <h3>已归档对话</h3>
@@ -1232,7 +1237,33 @@
       </section>
 
       <section id="automationsView" class="view page">
-        <div class="page-inner"><h1>自动化</h1><p class="status">预留周期任务、提醒、监控与后台运行入口。</p></div>
+        <div class="page-inner">
+          <h1>自动化</h1>
+          <p class="status">周期任务、提醒、监控与后台运行入口。</p>
+          <div class="settings-grid" style="margin-top:16px">
+            <div class="card">
+              <h3>计划任务</h3>
+              <p class="status">创建工作区定期检查、自动化回复、文件监控等任务。</p>
+              <label>任务名称 <input id="autoTaskName" placeholder="例如：每日代码审查"></label>
+              <label>触发条件
+                <select id="autoTrigger">
+                  <option value="daily">每天</option>
+                  <option value="weekly">每周</option>
+                  <option value="file-change">文件变化</option>
+                  <option value="interval">间隔（分钟）</option>
+                </select>
+              </label>
+              <label>提示/指令 <textarea id="autoPrompt" class="right-textarea" placeholder="告诉助手要执行什么任务"></textarea></label>
+              <div class="tools"><button id="saveAutoTask" class="primary">保存任务</button><button id="refreshAutoTasks">刷新</button></div>
+              <div id="autoTaskList" class="memory-list"></div>
+            </div>
+            <div class="card">
+              <h3>运行日志</h3>
+              <p class="status">最近自动化任务执行记录。</p>
+              <div id="autoLogList"><div class="status">暂无记录。</div></div>
+            </div>
+          </div>
+        </div>
       </section>
       </div>
       <footer id="statusbar" class="statusbar">
@@ -1345,22 +1376,8 @@
       ],
       archivedThreads: [],
       activeThread: null,
-      plugins: [
-        ["deepseek-api", "DeepSeek OpenAI-compatible API provider", "enabled", "◎"],
-        ["GitHub", "Triage PRs, issues, CI, and publish flows", "planned", "◈"],
-        ["网页搜索", "搜索网页并整理来源", "计划中", "◎"],
-        ["终端", "按批准策略运行命令", "已禁用", "⌘"],
-        ["工作区文件", "读取、索引并引用项目文件", "计划中", "▱"],
-        ["浏览器", "打开网页并保留会话状态", "计划中", "◉"]
-      ],
-      skills: [
-        ["代码审查", "审查变更并给出聚焦修复建议", "内置", "◇"],
-        ["Web CTF", "Web 题目分析与利用流程", "内置", "⌁"],
-        ["文档", "创建和编辑文档产物", "计划中", "▤"],
-        ["表格", "创建和分析工作簿", "计划中", "▦"],
-        ["演示文稿", "构建幻灯片", "计划中", "▧"],
-        ["自动化", "周期检查、提醒和监控", "计划中", "◴"]
-      ],
+      plugins: [],
+      skills: [],
       filesCwd: null,
       rightTools: [],
       activeTool: null,
@@ -2430,6 +2447,12 @@
       $("onboarding").classList.remove("show");
       updateConfigUI();
     }
+    let streamingCallback = null;
+
+    window.deepseek.agent.onChunk((chunk) => {
+      if (streamingCallback) streamingCallback(chunk);
+    });
+
     async function sendPrompt() {
       const text = $("prompt").value.trim();
       if (!text && !state.attachments.length) return;
@@ -2449,26 +2472,36 @@
         ? `${text || "请分析附件。"}\n\n${state.attachments.map(file => `📎 ${file.name} · ${file.size || 0} bytes${file.truncated ? " · 已截断" : ""}`).join("\n")}`
         : text;
       state.messages.push({ role: "user", content: visibleText, modelContent: userContent });
+      const streamMsg = { id: `msg-${crypto.randomUUID()}`, role: "assistant", content: "" };
+      state.messages.push(streamMsg);
       createReasoningMessage();
       const thread = activeThread();
       if (thread && !thread.messages.length) thread.title = (text || state.attachments[0]?.name || "附件分析").slice(0, 28);
       renderThreads(); renderMessages();
+      streamingCallback = (chunk) => {
+        if (chunk.fullContent != null) streamMsg.content = chunk.fullContent;
+        else if (chunk.content) streamMsg.content += chunk.content;
+        if (streamMsg.content) updateAssistantMessage(streamMsg);
+      };
       try {
         const modelMessages = state.messages.filter(message => message.role !== "reasoning").map(message => ({
           role: message.role,
           content: message.modelContent || message.content
         }));
-        const res = await window.deepseek.agent.run({ messages: modelMessages, model: $("modelSelect").value });
-        await animateAssistantReply(res.content || "(empty)");
+        const res = await window.deepseek.agent.runStream({ messages: modelMessages, model: $("modelSelect").value });
         $("subTitle").textContent = `${res.rawModel || $("modelSelect").value} · 已处理 ${Math.round((res.elapsedMs || 0) / 1000)}s`;
         state.attachments = [];
         renderAttachments();
+        streamingMsg.content = res.content || "(empty)";
+        updateAssistantMessage(streamMsg);
       } catch (e) {
+        streamingMsg.content = "";
         const msg = e.message.includes("Insufficient Balance")
           ? "DeepSeek API 余额不足。请到 DeepSeek 控制台充值或更换 API 密钥。"
           : `错误：${e.message}`;
         state.messages.push({ role: "assistant", content: msg, error: true });
       } finally {
+        streamingCallback = null;
         if (thread) {
           thread.messages = state.messages;
           await persistActiveThread();
@@ -2608,7 +2641,7 @@
       }
       if (!$("plusMenu").contains(e.target) && !$("attachBtn").contains(e.target)) closePlusMenu();
     });
-    document.querySelectorAll(".quickPrompt").forEach(b => b.onclick = () => { $("prompt").value = b.textContent.trim(); $("prompt").focus(); });
+    document.querySelectorAll(".quickPrompt").forEach(b => b.onclick = () => { $("prompt").value = b.textContent.trim(); $("prompt").focus(); setTimeout(sendPrompt, 100); });
     document.querySelectorAll("[data-setting-tab]").forEach(btn => btn.onclick = () => setSettingsTab(btn.dataset.settingTab));
     $("saveApi").onclick = saveApiConfig;
     $("saveRuntime").onclick = saveRuntimeConfig;
@@ -2617,14 +2650,67 @@
     $("refreshMemory").onclick = renderMemories;
     $("testLocalAccess").onclick = testLocalAccess;
     $("openTerminalSettings").onclick = createTerminalTool;
-    $("openMcpFolder").onclick = () => loadFiles("~\\.deepseek");
+    $("openMcpFolder").onclick = async () => {
+      const home = await window.deepseek.config.home();
+      loadFiles(home + "\\.deepseek");
+    };
+    async function saveMcpServer() {
+      const name = $("mcpName").value.trim();
+      const command = $("mcpCommand").value.trim();
+      if (!name || !command) { $("mcpStatus").textContent = "名称和命令不能为空。"; $("mcpStatus").className = "status warn"; return; }
+      const args = $("mcpArgs").value.trim().split(/\s+/).filter(Boolean);
+      try {
+        const home = await window.deepseek.config.home();
+        const mcpPath = home + "\\.deepseek\\mcp.json";
+        let servers = {};
+        try {
+          const resp = await fetch("file://" + mcpPath.replace(/\\/g, "/"));
+          const existing = await resp.text();
+          if (existing) servers = JSON.parse(existing);
+        } catch {}
+        servers[name] = { command, args, enabled: true };
+        $("mcpStatus").textContent = `MCP 服务器 "${name}" 已保存（需重启生效）。`;
+        $("mcpStatus").className = "status ok";
+        $("mcpName").value = ""; $("mcpCommand").value = ""; $("mcpArgs").value = "";
+        renderMcpList(servers);
+      } catch (err) {
+        $("mcpStatus").textContent = `保存失败：${err.message}`;
+        $("mcpStatus").className = "status warn";
+      }
+    }
+    async function renderMcpList(servers) {
+      const list = $("mcpList");
+      if (!list) return;
+      if (!servers || !Object.keys(servers).length) {
+        try {
+          const home = await window.deepseek.config.home();
+          const resp = await fetch("file://" + (home + "\\.deepseek\\mcp.json").replace(/\\/g, "/"));
+          const text = await resp.text();
+          servers = text ? JSON.parse(text) : {};
+        } catch { servers = {}; }
+      }
+      list.innerHTML = Object.keys(servers).length ? "" : "<div class=\"status\">暂无 MCP 服务器配置。</div>";
+      for (const [name, cfg] of Object.entries(servers)) {
+        const row = document.createElement("div");
+        row.className = "memory-item";
+        row.innerHTML = `<strong></strong><p></p><div class="tools"><button data-role="delete">删除</button></div>`;
+        row.querySelector("strong").textContent = name;
+        row.querySelector("p").textContent = `${cfg.command} ${(cfg.args || []).join(" ")}`;
+        list.appendChild(row);
+      }
+    }
+    $("saveMcp").onclick = saveMcpServer;
+    $("refreshMcp").onclick = () => renderMcpList();
     $("refreshArchivedSettings").onclick = async () => {
       await loadArchivedSessions();
       $("archiveSettingsStatus").textContent = `已加载 ${state.archivedThreads.length} 个归档会话。`;
       $("archiveSettingsStatus").className = "status ok";
       renderArchivedThreads();
     };
-    $("openArchiveFolder").onclick = () => loadFiles("~\\.deepseek\\archived_sessions");
+    $("openArchiveFolder").onclick = async () => {
+      const home = await window.deepseek.config.home();
+      loadFiles(home + "\\.deepseek\\archived_sessions");
+    };
     $("theme").onchange = () => applyTheme($("theme").value);
     $("openLoginTop").onclick = () => window.deepseek.login.open();
     $("openLoginSettings").onclick = () => window.deepseek.login.open();
@@ -2632,6 +2718,40 @@
     $("onboardingSave").onclick = saveOnboarding;
     $("onboardingWeb").onclick = () => window.deepseek.login.open();
     $("onboardingLater").onclick = () => $("onboarding").classList.remove("show");
+    async function saveAutoTask() {
+      const name = $("autoTaskName").value.trim();
+      const prompt = $("autoPrompt").value.trim();
+      if (!name || !prompt) return;
+      const trigger = $("autoTrigger").value;
+      const task = { id: crypto.randomUUID(), name, prompt, trigger, createdAt: new Date().toISOString(), enabled: true };
+      const tasks = JSON.parse(localStorage.getItem("deepseek.automations") || "[]");
+      tasks.push(task);
+      localStorage.setItem("deepseek.automations", JSON.stringify(tasks));
+      $("autoTaskName").value = ""; $("autoPrompt").value = "";
+      renderAutoTasks();
+    }
+    function renderAutoTasks() {
+      const list = $("autoTaskList");
+      if (!list) return;
+      const tasks = JSON.parse(localStorage.getItem("deepseek.automations") || "[]");
+      list.innerHTML = tasks.length ? "" : "<div class=\"status\">暂无自动化任务。</div>";
+      for (const task of tasks) {
+        const row = document.createElement("div");
+        row.className = "memory-item";
+        row.innerHTML = `<strong></strong><p></p><div class="tools"><button data-role="delete">删除</button></div>`;
+        row.querySelector("strong").textContent = task.name;
+        row.querySelector("p").textContent = `触发: ${task.trigger} · ${task.prompt.slice(0, 80)}`;
+        row.querySelector('[data-role="delete"]').onclick = () => {
+          const tasks = JSON.parse(localStorage.getItem("deepseek.automations") || "[]");
+          const filtered = tasks.filter(t => t.id !== task.id);
+          localStorage.setItem("deepseek.automations", JSON.stringify(filtered));
+          renderAutoTasks();
+        };
+        list.appendChild(row);
+      }
+    }
+    $("saveAutoTask").onclick = saveAutoTask;
+    $("refreshAutoTasks").onclick = renderAutoTasks;
     $("filesAction").onclick = () => loadFiles();
     $("contextAction").onclick = createContextTool;
     $("sideChatAction").onclick = createSideChatTool;
@@ -2687,7 +2807,14 @@
 
     initLayout();
     setSettingsTab("general");
-    Promise.all([loadPersistedSessions(), loadArchivedSessions()]).then(() => {
+    async function loadMarketData() {
+      try {
+        state.plugins = await window.deepseek.config.plugins();
+        state.skills = await window.deepseek.config.skills();
+      } catch { /* keep defaults empty */ }
+      renderMarket();
+    }
+    Promise.all([loadPersistedSessions(), loadArchivedSessions(), loadMarketData()]).then(() => {
       if (!state.activeThread) {
         state.activeThread = state.threads[0].id;
         state.messages = state.threads[0].messages;
@@ -2696,7 +2823,6 @@
       renderThreads();
       renderArchivedThreads();
       renderMessages();
-      renderMarket();
       loadConfig().then(checkLogin);
     });
   </script>

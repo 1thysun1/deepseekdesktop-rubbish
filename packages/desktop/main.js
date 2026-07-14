@@ -902,6 +902,70 @@ async function callDeepSeek({ messages, model }) {
   };
 }
 
+async function callDeepSeekStream({ messages, model }, onChunk) {
+  const config = loadConfig();
+  const apiKey = process.env.DEEPSEEK_API_KEY || config.apiKey;
+  if (!apiKey) {
+    throw new Error("缺少 API 密钥。请在设置页填写 DeepSeek API 密钥，或设置 DEEPSEEK_API_KEY。");
+  }
+  const trimmed = messages.slice(-Number(config.maxContextMessages || 24));
+  const url = `${config.baseUrl}/chat/completions`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: model || config.model,
+      messages: trimmed,
+      temperature: Number(config.temperature ?? 0.2),
+      stream: true
+    })
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`DeepSeek API ${res.status}: ${text.slice(0, 1200)}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullContent = "";
+  let reasoningContent = "";
+  
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (data === "[DONE]") { onChunk({ content: "", done: true }); continue; }
+      try {
+        const parsed = JSON.parse(data);
+        const delta = parsed.choices?.[0]?.delta || {};
+        if (delta.content) {
+          fullContent += delta.content;
+          onChunk({ content: delta.content, fullContent, done: false });
+        }
+        if (delta.reasoning_content) {
+          reasoningContent += delta.reasoning_content;
+        }
+      } catch (e) { /* skip unparseable SSE lines */ }
+    }
+  }
+  onChunk({ done: true, content: "", fullContent });
+  
+  return {
+    content: fullContent,
+    reasoningContent,
+    rawModel: model || config.model,
+    usage: null
+  };
+}
+
 function cacheStatsFor(messages, model, usage) {
   ensureAppDir();
   const stablePrefix = JSON.stringify({ model, system: messages.filter(m => m.role === "system").map(m => m.content), tools: ["files", "browser", "terminal", "side-chat"] });
@@ -1337,6 +1401,35 @@ async function runAgent(event, payload) {
 ipcMain.handle("config:get", () => publicConfig());
 ipcMain.handle("config:save", (_event, patch) => publicConfig(saveConfig(patch)));
 ipcMain.handle("config:path", () => CONFIG_PATH);
+ipcMain.handle("config:home", () => os.homedir());
+
+const DEFAULT_PLUGINS = [
+  ["deepseek-api", "DeepSeek OpenAI-compatible API provider", "enabled", "◎"],
+  ["GitHub", "Triage PRs, issues, CI, and publish flows", "planned", "◈"],
+  ["网页搜索", "搜索网页并整理来源", "计划中", "◎"],
+  ["终端", "按批准策略运行命令", "已禁用", "⌘"],
+  ["工作区文件", "读取、索引并引用项目文件", "计划中", "▱"],
+  ["浏览器", "打开网页并保留会话状态", "计划中", "◉"]
+];
+const DEFAULT_SKILLS = [
+  ["代码审查", "审查变更并给出聚焦修复建议", "内置", "◇"],
+  ["Web CTF", "Web 题目分析与利用流程", "内置", "⌁"],
+  ["文档", "创建和编辑文档产物", "计划中", "▤"],
+  ["表格", "创建和分析工作簿", "计划中", "▦"],
+  ["演示文稿", "构建幻灯片", "计划中", "▧"],
+  ["自动化", "周期检查、提醒和监控", "计划中", "◴"]
+];
+
+ipcMain.handle("config:plugins", () => {
+  const pluginsDir = path.join(APP_DIR, "plugins");
+  const files = fs.readdirSync(pluginsDir).filter(f => f.endsWith(".json"));
+  if (!files.length) return DEFAULT_PLUGINS;
+  const plugins = files.map(f => {
+    try { return JSON.parse(fs.readFileSync(path.join(pluginsDir, f), "utf8")); } catch { return null; }
+  }).filter(Boolean).map(p => [p.name || p.id, p.description || "", p.enabled ? "enabled" : "disabled", p.icon || "◎"]);
+  return plugins.length ? plugins : DEFAULT_PLUGINS;
+});
+ipcMain.handle("config:skills", () => DEFAULT_SKILLS);
 ipcMain.handle("sessions:list", () => listSessions());
 ipcMain.handle("sessions:list-archived", () => listArchivedSessions());
 ipcMain.handle("sessions:save", (_event, sessionData) => {
@@ -1374,11 +1467,102 @@ ipcMain.handle("login:open", () => createLoginWindow());
 ipcMain.handle("login:status", () => loginStatus());
 ipcMain.handle("chat:complete", async (_event, payload) => callDeepSeek(payload));
 ipcMain.handle("agent:run", async (event, payload) => runAgent(event, payload));
+ipcMain.handle("agent:run-stream", async (event, payload) => {
+  const started = Date.now();
+  const config = effectiveConfig(loadConfig());
+  const emit = (stage, detail = "", extra = {}) => {
+    event.sender.send("agent:status", { stage, detail, elapsedMs: Date.now() - started, ...extra });
+  };
+  const userText = payload?.messages?.filter(m => m.role === "user").at(-1)?.content || "";
+  emit("理解任务", "读取用户输入和当前对话上下文");
+  emit("思考框架", "真实目标 → 上下文 → 宿主证据 → 假设/反证 → 执行 → 校验 → 交付", { type: "trace.protocol" });
+  const conversationContext = compactConversationContext(payload?.messages || []);
+  const localTargetText = targetTextForLocalContext(payload?.messages || [], userText);
+  const webContext = await maybeCollectWebContext(userText, emit);
+  const localContext = await maybeCollectLocalContext(localTargetText || userText, emit);
+  const planPrompt = [
+    {
+      role: "system",
+      content: [
+        "你是 Agent Planner。不要输出隐藏思维链，只输出面向用户可审计的思考摘要。",
+        "用户原始请求优先级最高；若用户要求只回答某个固定文本，则计划也必须保持这个约束。",
+        OBJECTIVE_COMPLETION_PROTOCOL,
+        CLAUDE_REASONIX_AGENT_PROTOCOL,
+        VISIBLE_REASONING_PROTOCOL,
+        CTF_RE_EVIDENCE_PROTOCOL,
+        "宿主能力：可以联网抓取网页、搜索公开网页、读写授权文件、运行 PowerShell/终端命令。不要声称不能访问互联网、本地终端、PowerShell 环境变量或本地文件系统；若权限不足，应说明需要切换权限。",
+        "严禁伪造命令输出、文件内容、反汇编、flag、运行结果或工具执行结果。没有宿主提供的证据时，只能说尚未执行尚无证据，不能把计划写成结果。",
+        "CTF/逆向/取证任务必须优先基于宿主提供的确定性分析结果。",
+        "如果宿主文件系统结果里出现多个历史文件，必须选择【最近一次文件目标】或当前用户明确提到的文件；禁止把旧文件结果当新题答案。",
+        "用 JSON 输出，字段为：user_intent, deliverable, known_context, evidence, rejected_assumptions, next_actions, checks, blocked_reason。next_actions 最多 6 条；如果已经能交付结果，blocked_reason 为空。"
+      ].join("\n\n")
+    },
+    {
+      role: "user",
+      content: [conversationContext, `【当前用户请求】\n${userText}`, webContext, localContext].filter(Boolean).join("\n\n")
+    }
+  ];
+  emit("制定计划", `使用 ${config.reasonerModel || "deepseek-reasoner"} 生成可审计计划`, { type: "reasoning.start" });
+  let planText = "";
+  try {
+    const plan = await callDeepSeek({ messages: planPrompt, model: config.reasonerModel || "deepseek-reasoner" });
+    planText = plan.content || "";
+    emit("计划完成", `输入 ${plan.usage?.prompt_tokens ?? "?"}，输出 ${plan.usage?.completion_tokens ?? "?"} tokens`, { type: "reasoning.end", usage: plan.usage });
+    emit("思考摘要", planText.slice(0, 1600), { type: "trace.summary" });
+  } catch (err) {
+    emit("计划降级", "推理模型不可用，切换到直接执行");
+  }
+  emit("执行", `使用 ${payload?.model || config.model || "deepseek-chat"} 流式生成回复`);
+  const finalMessages = [
+    {
+      role: "system",
+      content: [
+        "你是 DeepSeek Windows 的桌面 Agent。",
+        "你运行在用户本机的 DeepSeek Desktop 宿主内.",
+        `当前权限：${config.permissionPreset || "custom"} (${config.sandboxMode || "workspace-write"} / ${config.approvalPolicy || "on-request"})`,
+        OBJECTIVE_COMPLETION_PROTOCOL,
+        CLAUDE_REASONIX_AGENT_PROTOCOL,
+        VISIBLE_REASONING_PROTOCOL,
+        CTF_RE_EVIDENCE_PROTOCOL,
+      ].join("\n")
+    },
+    ...(memoryContext() ? [{ role: "system", content: memoryContext() }] : []),
+    ...(conversationContext ? [{ role: "system", content: conversationContext }] : []),
+    ...(webContext ? [{ role: "system", content: webContext }] : []),
+    ...(localContext ? [{ role: "system", content: localContext }] : []),
+    ...(payload?.messages || []),
+    ...(planText ? [{ role: "system", content: `可审计计划摘要：\n${planText}` }] : [])
+  ];
+  const result = await callDeepSeekStream(
+    { messages: finalMessages, model: payload?.model || config.model },
+    (chunk) => event.sender.send("agent:chunk", chunk)
+  );
+  const usage = cacheStatsFor(finalMessages, result.rawModel, { prompt_tokens: 0, completion_tokens: 0 });
+  emit("用量", `流式完成，模型 ${result.rawModel}`, { type: "usage", usage });
+  const saved = maybeSaveRequestedFile(userText, payload?.messages || [], result.content);
+  if (saved) {
+    emit("文件", `已写入 ${saved.path}`, { type: "tool.file" });
+    result.content = `已保存到本机：${saved.path} 写入大小：${saved.bytes} bytes`;
+  }
+  emit("校验", "检查回复是否为空并整理输出");
+  return {
+    ...result,
+    elapsedMs: Date.now() - started,
+    plan: planText,
+    cache: usage
+  };
+});
+function expandHome(dir) {
+  if (typeof dir === "string" && dir.startsWith("~")) {
+    return path.join(os.homedir(), dir.slice(1));
+  }
+  return dir;
+}
 ipcMain.handle("files:list", async (_event, dir) => {
   const config = loadConfig();
   const effective = effectiveConfig(config);
   const root = path.resolve(config.workspace || "D:\\deepseek");
-  const target = path.resolve(dir || root);
+  const target = path.resolve(expandHome(dir || root));
   if (!normalizeInside(target, root) && !(effective.sandboxMode === "danger-full-access" && effective.approvalPolicy === "never")) {
     throw new Error("拒绝列出工作区之外的文件。");
   }
