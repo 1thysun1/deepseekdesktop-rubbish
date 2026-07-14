@@ -4,7 +4,11 @@ contextBridge.exposeInMainWorld("deepseek", {
   config: {
     get: () => ipcRenderer.invoke("config:get"),
     save: (patch) => ipcRenderer.invoke("config:save", patch),
-    path: () => ipcRenderer.invoke("config:path")
+    path: () => ipcRenderer.invoke("config:path"),
+    home: () => ipcRenderer.invoke("config:home"),
+    plugins: () => ipcRenderer.invoke("config:plugins"),
+    skills: () => ipcRenderer.invoke("config:skills"),
+    auditLog: () => ipcRenderer.invoke("config:audit-log")
   },
   sessions: {
     list: () => ipcRenderer.invoke("sessions:list"),
@@ -12,7 +16,8 @@ contextBridge.exposeInMainWorld("deepseek", {
     save: (sessionData) => ipcRenderer.invoke("sessions:save", sessionData),
     archive: (id) => ipcRenderer.invoke("sessions:archive", id),
     restore: (id) => ipcRenderer.invoke("sessions:restore", id),
-    delete: (id) => ipcRenderer.invoke("sessions:delete", id)
+    delete: (id) => ipcRenderer.invoke("sessions:delete", id),
+    search: (query) => ipcRenderer.invoke("sessions:search", query)
   },
   memory: {
     list: () => ipcRenderer.invoke("memory:list"),
@@ -29,7 +34,9 @@ contextBridge.exposeInMainWorld("deepseek", {
   },
   agent: {
     run: (payload) => ipcRenderer.invoke("agent:run", payload),
-    onStatus: (callback) => ipcRenderer.on("agent:status", (_event, payload) => callback(payload))
+    runStream: (payload) => ipcRenderer.invoke("agent:run-stream", payload),
+    onStatus: (callback) => ipcRenderer.on("agent:status", (_event, payload) => callback(payload)),
+    onChunk: (callback) => ipcRenderer.on("agent:chunk", (_event, payload) => callback(payload))
   },
   files: {
     list: (dir) => ipcRenderer.invoke("files:list", dir),
@@ -54,6 +61,10 @@ contextBridge.exposeInMainWorld("deepseek", {
     write: (id, input) => ipcRenderer.invoke("terminal:write", id, input),
     kill: (id) => ipcRenderer.invoke("terminal:kill", id),
     onData: (callback) => ipcRenderer.on("terminal:data", (_event, payload) => callback(payload))
+  },
+  workspace: {
+    index: (dir) => ipcRenderer.invoke("workspace:index", dir),
+    search: (query) => ipcRenderer.invoke("workspace:search", query)
   },
   events: {
     onLoginStatus: (callback) => ipcRenderer.on("login-status", (_event, payload) => callback(payload)),

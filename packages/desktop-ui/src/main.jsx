@@ -1,35 +1,81 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  Archive,
-  Bot,
-  ChevronDown,
-  FileText,
-  Folder,
-  Globe,
-  LayoutPanelRight,
-  Menu,
-  MessageSquare,
-  Paperclip,
-  Plus,
-  Search,
-  Settings,
-  Shield,
-  Terminal,
-  Wrench
+  Archive, Bot, ChevronDown, FileText, Folder, Globe,
+  LayoutPanelRight, Menu, MessageSquare, Paperclip, Plus,
+  Search, Settings, Shield, Terminal, Wrench
 } from "lucide-react";
 import "./styles.css";
 
 const api = window.deepseek;
 const permissionLabels = {
-  default: "默认权限",
-  "auto-review": "自动审查",
-  "full-access": "完全访问权限",
-  custom: "自定义"
+  default: "默认权限", "auto-review": "自动审查",
+  "full-access": "完全访问权限", custom: "自定义"
 };
 
-function cx(...items) {
-  return items.filter(Boolean).join(" ");
+function cx(...items) { return items.filter(Boolean).join(" "); }
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+function renderInlineMarkdown(text) {
+  return escapeHtml(text)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+}
+
+function MarkdownContent({ content }) {
+  const parts = String(content || "").split(/```/);
+  const elements = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 1) {
+      const raw = parts[i] || "";
+      const lines = raw.replace(/^\n/, "").split("\n");
+      const first = lines[0]?.trim() || "";
+      const lang = /^[\w#+.-]+$/.test(first) ? first : "";
+      const code = lang ? lines.slice(1).join("\n") : raw.replace(/^\n/, "");
+      elements.push(<pre key={i} className="code-block"><div className="code-head">{lang || "text"}<button onClick={() => navigator.clipboard.writeText(code)}>复制</button></div><code>{code}</code></pre>);
+    } else {
+      const lines = (parts[i] || "").split("\n");
+      let paraLines = [];
+      for (const line of lines) {
+        if (!line.trim() && paraLines.length) {
+          elements.push(<p key={`p-${i}-${paraLines.length}`} dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(paraLines.join(" ")) }} />);
+          paraLines = [];
+          continue;
+        }
+        if (/^#{1,3}\s/.test(line)) {
+          const m = line.match(/^(#{1,3})\s+(.+)$/);
+          const Tag = `h${m[1].length}`;
+          elements.push(<Tag key={`h-${i}-${line}`} dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(m[2]) }} />);
+          continue;
+        }
+        if (/^>\s/.test(line)) {
+          elements.push(<blockquote key={`q-${i}-${line}`} dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(line.replace(/^>\s?/, "")) }} />);
+          continue;
+        }
+        if (/^\s*[-*]\s/.test(line)) {
+          elements.push(<li key={`li-${i}-${line}`} dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(line.replace(/^\s*[-*]\s+/, "")) }} />);
+          continue;
+        }
+        if (/^\s*\d+\.\s/.test(line)) {
+          elements.push(<li key={`ol-${i}-${line}`} dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(line.replace(/^\s*\d+\.\s+/, "")) }} />);
+          continue;
+        }
+        if (/^---+$/.test(line.trim())) {
+          elements.push(<hr key={`hr-${i}-${line}`} />);
+          continue;
+        }
+        paraLines.push(line);
+      }
+      if (paraLines.length) {
+        elements.push(<p key={`p-end-${i}`} dangerouslySetInnerHTML={{ __html: renderInlineMarkdown(paraLines.join(" ")) }} />);
+      }
+    }
+  }
+  return <div className="md">{elements}</div>;
 }
 
 function Sidebar({ closed, page, setPage, threads, archived, activeThread, selectThread, newThread, archiveThread }) {
@@ -87,12 +133,9 @@ function Composer({ config, setConfig, onSend, busy, onTool }) {
     return Array.from(files || []).map(file => api.files.pathForFile?.(file) || file.path || "").filter(Boolean);
   }
   async function setPermission(preset) {
-    const patch = preset === "default"
-      ? { permissionPreset: preset, sandboxMode: "workspace-write", approvalPolicy: "on-request" }
-      : preset === "auto-review"
-        ? { permissionPreset: preset, sandboxMode: "workspace-write", approvalPolicy: "on-failure" }
-        : preset === "full-access"
-          ? { permissionPreset: preset, sandboxMode: "danger-full-access", approvalPolicy: "never" }
+    const patch = preset === "default" ? { permissionPreset: preset, sandboxMode: "workspace-write", approvalPolicy: "on-request" }
+      : preset === "auto-review" ? { permissionPreset: preset, sandboxMode: "workspace-write", approvalPolicy: "on-failure" }
+        : preset === "full-access" ? { permissionPreset: preset, sandboxMode: "danger-full-access", approvalPolicy: "never" }
           : { permissionPreset: "custom" };
     const next = await api.config.save(patch);
     setConfig(next);
@@ -106,27 +149,16 @@ function Composer({ config, setConfig, onSend, busy, onTool }) {
     setAttachments([]);
   }
   return (
-    <form
-      ref={dropRef}
-      className={cx("composer", busy && "busy")}
-      onSubmit={submit}
+    <form ref={dropRef} className={cx("composer", busy && "busy")} onSubmit={submit}
       onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; dropRef.current?.classList.add("dragging"); }}
       onDragLeave={() => dropRef.current?.classList.remove("dragging")}
       onDrop={(event) => {
-        event.preventDefault();
-        dropRef.current?.classList.remove("dragging");
+        event.preventDefault(); dropRef.current?.classList.remove("dragging");
         const paths = pathsFromFiles(event.dataTransfer.files);
         if (paths.length) attachPaths(paths);
-      }}
-    >
-      <textarea
-        placeholder="尽管问"
-        value={text}
-        onChange={event => setText(event.target.value)}
-        onKeyDown={event => {
-          if (event.key === "Enter" && !event.shiftKey) submit(event);
-        }}
-      />
+      }}>
+      <textarea placeholder="尽管问" value={text} onChange={event => setText(event.target.value)}
+        onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) submit(event); }} />
       {!!attachments.length && <div className="attachments">{attachments.map(file => <span key={file.path}>📎 {file.name}<button type="button" onClick={() => setAttachments(v => v.filter(x => x.path !== file.path))}>×</button></span>)}</div>}
       <div className="composerBar">
         <div className="toolRow">
@@ -142,7 +174,6 @@ function Composer({ config, setConfig, onSend, busy, onTool }) {
                 <button type="button" onClick={() => onTool("browser")}><Globe size={16} />浏览器</button>
                 <button type="button" onClick={() => onTool("side-chat")}><MessageSquare size={16} />侧聊</button>
                 <hr />
-                <button type="button" onClick={() => setText(v => `${v}\n请先给出可审计计划，再执行。`.trim())}>计划</button>
                 <button type="button" onClick={() => onTool("plugins")}><Wrench size={16} />插件</button>
               </div>
             )}
@@ -171,6 +202,8 @@ function Composer({ config, setConfig, onSend, busy, onTool }) {
 }
 
 function Chat({ messages, reasoning, config, setConfig, onSend, busy, onTool }) {
+  const msgsEndRef = useRef(null);
+  useEffect(() => { msgsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   return (
     <main className="chat">
       <div className="messages">
@@ -181,22 +214,103 @@ function Chat({ messages, reasoning, config, setConfig, onSend, busy, onTool }) 
             {["解释当前项目结构，并给出下一步实现计划", "检查安全策略和配置目录是否合理", "分析一个本地 pcap/zip/exe 文件"].map(item => <button key={item} onClick={() => onSend(item, [])}>{item}</button>)}
           </div>
         )}
-        {messages.map((m, i) => <article key={i} className={cx("msg", m.role)}>{m.content}</article>)}
+        {messages.map((m, i) => (
+          <article key={i} className={cx("msg", m.role)}>
+            {m.role === "assistant" ? <MarkdownContent content={m.content} /> : m.content}
+          </article>
+        ))}
         {reasoning && <article className="reasoning"><strong>{reasoning.title}</strong>{reasoning.steps.map((s, i) => <p key={i}>• {s}</p>)}</article>}
+        <div ref={msgsEndRef} />
       </div>
       <Composer config={config} setConfig={setConfig} busy={busy} onSend={onSend} onTool={onTool} />
     </main>
   );
 }
 
+function FilesPanel({ onClose }) {
+  const [dir, setDir] = useState(null);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  async function load(d) {
+    try {
+      setError("");
+      const result = await api.files.list(d);
+      setData(result);
+      setDir(result.cwd);
+    } catch (e) { setError(e.message); }
+  }
+  useEffect(() => { load(); }, []);
+  return <div className="toolPanel">
+    <div className="toolsBar"><button onClick={() => data?.parent && load(data.parent)} disabled={!data?.parent}>上一级</button><button onClick={() => load(dir)}>刷新</button></div>
+    <div className="toolCwd">{dir || ""}</div>
+    {error && <p className="error">{error}</p>}
+    {data?.entries?.map(e => <div key={e.path} className="toolRow"><button onClick={() => e.type === "dir" ? load(e.path) : api.files.open(e.path)}>{e.type === "dir" ? "▱" : "▤"} {e.name}</button></div>)}
+  </div>;
+}
+
+function TerminalPanel({ onClose }) {
+  const [output, setOutput] = useState("交互式终端\n");
+  const [cmd, setCmd] = useState("");
+  const outRef = useRef(null);
+  const idRef = useRef(null);
+  useEffect(() => {
+    const id = `term-${crypto.randomUUID().slice(0, 8)}`;
+    idRef.current = id;
+    api.terminal.create(id);
+    const handler = ({ id: eid, kind, data }) => {
+      if (eid === id) setOutput(prev => prev + (kind === "stderr" ? `\n[err] ${data}` : data));
+    };
+    api.terminal.onData(handler);
+    return () => { api.terminal.kill(id); };
+  }, []);
+  useEffect(() => { outRef.current?.scrollTo(0, outRef.current.scrollHeight); }, [output]);
+  async function send() {
+    if (!cmd.trim() || !idRef.current) return;
+    setOutput(prev => prev + `\n> ${cmd}\n`);
+    await api.terminal.write(idRef.current, cmd);
+    setCmd("");
+  }
+  return <div className="toolPanel">
+    <pre ref={outRef} className="termScreen">{output}</pre>
+    <div className="termBar"><input value={cmd} onChange={e => setCmd(e.target.value)} onKeyDown={e => e.key === "Enter" && send()} placeholder="输入命令" /><button onClick={send}>发送</button></div>
+  </div>;
+}
+
+function BrowserPanel({ onClose }) {
+  const [url, setUrl] = useState("https://chat.deepseek.com/");
+  return <div className="toolPanel">
+    <div className="toolsBar"><input value={url} onChange={e => setUrl(e.target.value)} style={{ flex: 1 }} /><button onClick={() => api.browser.open(url)}>打开</button></div>
+    <iframe src={url} className="browserFrame" title="browser" />
+  </div>;
+}
+
+function SideChatPanel({ onClose }) {
+  const [text, setText] = useState("");
+  const [output, setOutput] = useState("");
+  async function send() {
+    if (!text.trim()) return;
+    setOutput("请求中...");
+    try {
+      const res = await api.chat.complete({ messages: [{ role: "user", content: text }], model: "deepseek-chat" });
+      setOutput(res.content || "(empty)");
+    } catch (e) { setOutput(`错误：${e.message}`); }
+  }
+  return <div className="toolPanel">
+    <textarea value={text} onChange={e => setText(e.target.value)} placeholder="输入侧边问题，不影响主对话" className="toolTextarea" />
+    <button onClick={send} className="primary">发送</button>
+    <pre className="toolOutput">{output}</pre>
+  </div>;
+}
+
 function RightPanel({ tool, close }) {
   return (
     <aside className={cx("rightPanel", !tool && "closed")}>
-      <header><strong>{tool || "工具"}</strong><button onClick={close}>×</button></header>
+      <header><strong>{tool ? { files: "文件", terminal: "终端", browser: "浏览器", "side-chat": "侧聊" }[tool] || "工具" : "工具"}</strong><button onClick={close}>×</button></header>
       <div className="toolBody">
-        {tool === "terminal" && <p>终端入口已切到 React 壳；底层仍用 Electron IPC 创建 PowerShell 会话。</p>}
-        {tool === "files" && <p>文件入口已切到 React 壳；底层复用 Electron 文件列表、打开和附件读取。</p>}
-        {tool === "browser" && <p>浏览器入口已切到 React 壳；底层复用联网和外部浏览器打开。</p>}
+        {tool === "files" && <FilesPanel />}
+        {tool === "terminal" && <TerminalPanel />}
+        {tool === "browser" && <BrowserPanel />}
+        {tool === "side-chat" && <SideChatPanel />}
         {!tool && null}
       </div>
     </aside>
@@ -206,16 +320,43 @@ function RightPanel({ tool, close }) {
 function SettingsPage({ config, setConfig }) {
   const tabs = ["常规", "外观", "配置", "权限", "联网", "记忆", "已归档对话"];
   const [tab, setTab] = useState("常规");
+  const [memories, setMemories] = useState([]);
+  const [memTitle, setMemTitle] = useState("");
+  const [memContent, setMemContent] = useState("");
+  useEffect(() => {
+    if (tab === "记忆") api.memory.list().then(setMemories);
+    if (tab === "已归档对话") api.sessions.listArchived();
+  }, [tab]);
+  async function saveMemoryEntry() {
+    if (!memContent.trim()) return;
+    await api.memory.save({ id: crypto.randomUUID(), title: memTitle || "记忆", content: memContent, tags: [] });
+    setMemTitle(""); setMemContent("");
+    setMemories(await api.memory.list());
+  }
   return (
     <main className="settingsPage">
       <nav>{tabs.map(t => <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{t}</button>)}</nav>
       <section>
         <h1>{tab}</h1>
         {tab === "权限" ? (
-          <div className="card">
-            <h3>权限</h3>
+          <div className="card"><h3>权限</h3>
             {Object.entries(permissionLabels).map(([key, label]) => <button key={key} onClick={async () => setConfig(await api.config.save(key === "full-access" ? { permissionPreset: key, sandboxMode: "danger-full-access", approvalPolicy: "never" } : { permissionPreset: key }))}>{label}</button>)}
           </div>
+        ) : tab === "联网" ? (
+          <div className="card"><h3>联网</h3>
+            <p>联网设置通过 Electron 原生设置页面管理。</p>
+            <p className="status">当前状态：{config.network?.enabled !== false ? "已开启" : "已关闭"}</p>
+            <p className="status">域名限制：{config.network?.allowedDomains?.length ? config.network.allowedDomains.join(", ") : "无"}</p>
+          </div>
+        ) : tab === "记忆" ? (
+          <div className="card"><h3>记忆</h3>
+            <input placeholder="标题" value={memTitle} onChange={e => setMemTitle(e.target.value)} />
+            <textarea placeholder="需要长期记住的事实、偏好、项目约束" value={memContent} onChange={e => setMemContent(e.target.value)} className="toolTextarea" />
+            <button onClick={saveMemoryEntry} className="primary">保存记忆</button>
+            <div className="memoryList">{memories.map(m => <div key={m.id} className="memoryItem"><strong>{m.title}</strong><p>{m.content}</p></div>)}</div>
+          </div>
+        ) : tab === "已归档对话" ? (
+          <div className="card"><h3>已归档对话</h3><p className="status">在侧边栏归档中查看和管理。</p></div>
         ) : (
           <div className="card"><pre>{JSON.stringify(config, null, 2)}</pre></div>
         )}
@@ -259,7 +400,7 @@ function App() {
     const next = [...messages, { role: "user", content: text + attachmentText }];
     setMessages(next);
     setBusy(true);
-    setReasoning({ title: "正在思考", steps: ["理解任务", "制定计划"] });
+    setReasoning({ title: "正在思考", steps: ["理解任务", "制定计划", "生成回复"] });
     try {
       const res = await api.agent.run({ model: config.model || "deepseek-chat", messages: next });
       const done = [...next, { role: "assistant", content: res.content || "(empty)" }];

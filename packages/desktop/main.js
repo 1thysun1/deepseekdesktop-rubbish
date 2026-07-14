@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,40 +27,45 @@ const DEFAULT_CONFIG = {
   temperature: 0.2
 };
 
-const VISIBLE_REASONING_PROTOCOL = [
-  "你使用“可审计思考协议”处理编程和网安任务，但不要泄露隐藏思维链。",
-  "必须先输出或记录可见摘要，而不是直接给结论：",
-  "1. 目标：用一句话复述用户要达成的结果。",
-  "2. 范围：列出工作区、系统、网络、账号、权限边界；不确定处标为假设。",
-  "3. 证据：优先运行态、日志、配置、入口、调用链、复现步骤；不要用猜测覆盖证据。",
-  "4. 风险：识别输入验证、认证授权、会话、文件/命令、依赖、密钥、网络、日志、供应链风险。",
-  "5. 计划：给 3-6 个可执行步骤；每步说明要观察的成功信号。",
-  "6. 执行：小步变更，保留可回退路径；命令和文件操作按当前权限策略执行：默认权限需确认，自动审查可审查后执行，完全访问/never 视为用户已授权。",
-  "7. 校验：运行测试/复现/静态检查；给出命令、结果、剩余风险。",
-  "8. 输出：按 结果 -> 证据 -> 验证 -> 下一步 汇报。",
-  "网安任务默认限定在用户授权工作区/靶场/CTF/本地环境；优先防御、审计、复现和修复。"
-].join("\n");
+const VISIBLE_REASONING_PROTOCOL = `你使用「可审计思考协议」处理编程和网安任务。
+必须输出可见摘要，输出格式：结果 -> 证据 -> 验证 -> 下一步。
+1. 目标：用一句话复述用户要达成的结果。
+2. 范围：列出工作区、系统、网络、账号、权限边界；不确定处标为假设。
+3. 证据：优先引用宿主上下文中的运行态输出、文件内容、配置、调用链、复现步骤。
+4. 多步验证循环：
+   a. 每完成一步，先校验结果是否与预期一致。
+   b. 如果不一致，输出反证并调整假设，不要继续沿错误方向深入。
+   c. 每步最多重试 2 次，失败则切换策略。
+   d. 如果用户说错误或给出正确答案，丢弃旧结论，输出被推翻的假设列表。
+5. 计划：给 3-6 个可执行步骤；每步说明要观察的成功信号。
+6. 执行：小步变更，保留可回退路径。
+7. 文件切换检测：如果当前证据来自旧文件（文件名或路径与当前题不同），立即停止输出并说明。
+8. 输出：按 结果 -> 证据 -> 验证 -> 下一步 汇报。`;
 
 const CTF_RE_EVIDENCE_PROTOCOL = [
-  "CTF/逆向硬规则：先证据，后假设；不允许把计划、伪代码、历史聊天或用户粘贴的错误输出当作当前文件证据。",
-  "任何 flag/密钥/地址/节区/overlay/内嵌文件结论，必须同时给出证据来源：文件偏移、VA/RVA、节区名、宿主工具 stdout 或运行输出。",
-  "如果候选值只来自 strings 或格式串，标为“候选/待验证”，不能写成最终答案；必须说明还缺哪一步验证。",
-  "如果宿主确定性分析显示 overlay=0 或内嵌 PE 未发现，禁止继续编造隐藏 PE、第三层 PE、ZIP、PNG 等不存在结构。",
-  "用户指出“错”时，先列出被推翻的假设和反证，再回到当前宿主证据；不得继续维护旧结论或无依据深挖。",
-  "当用户要求“重写/再写/重新分析”时，要把最近一条错误回答当成待修正对象；必须重新读取最近上下文里出现的文件/命令证据，不得只改措辞。",
-  "回答逆向题按：结论/候选 -> 关键证据 -> 被排除的错误假设 -> 下一步真实操作。不要输出大段未执行代码。"
+  "CTF/逆向强制规则：",
+  "1. 先证据，后假设。禁止将计划、伪代码、历史聊天或用户粘贴的错误输出当作当前文件证据。",
+  "2. 任何 flag/密钥/地址/节区/overlay/内嵌文件结论，必须给出证据来源：文件偏移、VA/RVA、节区名、宿主工具 stdout。",
+  "3. 如果候选值只来自 strings 或格式串，标为\"候选/待验证\"，不能写成最终答案。必须说明还缺哪一步验证。",
+  "4. 如果宿主确定性分析显示 overlay=0 或内嵌 PE 未发现，禁止编造隐藏 PE/第三层 PE/ZIP/PNG 等不存在结构。",
+  "5. 禁止声称\"我已经运行/生成了\"某个命令、反汇编、flag——必须由宿主上下文中的真实输出来支持。",
+  "6. 用户指出\"错\"时：先列出被推翻的假设和反证，再回到当前宿主证据；不得继续维护旧结论。",
+  "7. 文件切换检测：如果当前目标文件的路径/名称与来源证据不一致，必须停止输出并说明\"这是旧题证据\"。",
+  "8. 当用户要求\"重写/继续/第二题/重新分析\"时，找到最近一条错误回答作为待修正对象，重新读取当前文件证据。",
+  "9. 回答格式：结论/候选 -> 关键证据 -> 被排除的假设 -> 下一步操作。禁止输出大段未执行代码。"
 ].join("\n");
 
 const OBJECTIVE_COMPLETION_PROTOCOL = [
-  "目标完成优先协议：先判断用户真正要的交付物，而不是机械复述当前一句话。",
-  "如果用户说“re题/逆向/把 flag 写出来/做到有答案/继续/重写”，真实目标通常是得到最终 flag、漏洞点、补丁或可运行结果；不要只给计划、命令模板或让用户代跑。",
-  "宿主有能力读取文件、运行命令、联网搜索时，必须先用宿主证据推进到可交付结果；只有缺文件、缺权限、工具连续失败或证据不足时，才明确阻塞条件。",
-  "最终回答要以结果开头。CTF/逆向任务若已能推出 flag，第一段直接给 flag；证据随后压缩列出。",
-  "用户纠错、标答、上一轮失败输出都是强反馈：后续计划必须覆盖完整对话上下文，而不是只看最后一句“重写/继续”。",
-  "禁止输出“Step 1/Step 2 请你运行”作为最终结果；若仍需步骤，必须说明这些步骤已经由宿主执行过，或明确为什么当前宿主不能执行。",
-  "不要被 planner 的 JSON 摘要限制：计划只是辅助，最终答案必须解决用户原始目标。",
-  "附件/文件目标优先级：最新用户消息或最近一次附件中的文件是当前目标；新题出现后，旧题的 flag、路径、反汇编和格式串只能作为已纠正历史，禁止当作当前题答案。",
-  "跨题熔断：如果当前目标文件名与答案证据来源文件名不一致，必须停止输出该答案，并说明“这是旧题证据，不是当前文件”。"
+  "目标完成优先规则：",
+  "1. 先判断用户真正要的交付物，而不是机械复述当前一句话。",
+  "2. 如果用户说\u201Cre题/逆向/把 flag 写出来/做到有答案/继续/重写\u201D，真实目标是最终 flag、漏洞点或可运行结果。",
+  "3. 宿主有能力读取文件、运行命令、联网搜索时，必须先用宿主证据推进到可交付结果。",
+  "4. 最终回答以结果开头。CTF/逆向若已能推出 flag，第一段直接给 flag。",
+  "5. 用户纠错、标答、失败输出都是强反馈：后续计划必须覆盖完整对话上下文。",
+  "6. 禁止输出\u201CStep 1/Step 2 请你运行\u201D作为最终结果。若仍需步骤，说明为什么宿主不能执行。",
+  "7. 不要被 planner 的 JSON 摘要限制：最终答案必须解决用户原始目标。",
+  "8. 附件/文件目标优先级：最新用户消息中的文件是当前目标。",
+  "9. 跨题熔断：如果当前目标文件名与答案证据来源文件名不一致，停止输出并说明。"
 ].join("\n");
 
 const CLAUDE_REASONIX_AGENT_PROTOCOL = [
@@ -499,27 +504,82 @@ function ensureAppDir() {
   }
 }
 
-function loadConfig() {
+const AUDIT_LOG_PATH = path.join(APP_DIR, "audit.jsonl");
+
+function audit(action, detail = "") {
   ensureAppDir();
-  if (!fs.existsSync(CONFIG_PATH)) {
-    writeConfigToml(DEFAULT_CONFIG);
-    return { ...DEFAULT_CONFIG };
-  }
+  const entry = JSON.stringify({
+    t: new Date().toISOString(),
+    a: action,
+    d: detail
+  });
   try {
-    const config = { ...DEFAULT_CONFIG, ...JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")) };
-    writeConfigToml(config);
-    return config;
+    fs.appendFileSync(AUDIT_LOG_PATH, entry + "\n", "utf8");
+  } catch {}
+}
+
+function configApiKey() {
+  const config = loadConfigRaw();
+  if (config._encryptedKey) {
+    try {
+      const result = runPowerShellSync(`[System.Text.Encoding]::UTF8.GetString([System.Security.Cryptography.ProtectedData]::Unprotect([System.Convert]::FromBase64String('${config._encryptedKey.replace(/'/g, "''")}'), $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser))`);
+      if (result.code === 0 && result.out.trim()) return result.out.trim();
+    } catch {}
+  }
+  return process.env.DEEPSEEK_API_KEY || config.apiKey || "";
+}
+
+function encryptApiKey(plaintext) {
+  if (!plaintext) return null;
+  try {
+    const result = runPowerShellSync(`[System.Convert]::ToBase64String([System.Security.Cryptography.ProtectedData]::Protect([System.Text.Encoding]::UTF8.GetBytes('${plaintext.replace(/'/g, "''")}'), $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser))`);
+    if (result.code === 0 && result.out.trim()) return result.out.trim();
+  } catch {}
+  return null;
+}
+
+function runPowerShellSync(command) {
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], { windowsHide: true, encoding: "utf8", timeout: 10000 });
+  return { code: result.status, out: (result.stdout || "").trim(), err: (result.stderr || "").trim() };
+}
+
+function loadConfigRaw() {
+  ensureAppDir();
+  if (!fs.existsSync(CONFIG_PATH)) return { ...DEFAULT_CONFIG };
+  try {
+    return { ...DEFAULT_CONFIG, ...JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")) };
   } catch {
-    writeConfigToml(DEFAULT_CONFIG);
     return { ...DEFAULT_CONFIG };
   }
 }
 
+function loadConfig() {
+  const config = loadConfigRaw();
+  writeConfigToml(config);
+  return config;
+}
+
 function saveConfig(patch) {
-  const next = { ...loadConfig(), ...patch };
+  const current = loadConfigRaw();
+  const next = { ...current, ...patch };
+  if (patch.apiKey) {
+    const encrypted = encryptApiKey(patch.apiKey);
+    if (encrypted) {
+      next._encryptedKey = encrypted;
+      delete next.apiKey;
+    }
+  }
+  if (!next._encryptedKey && !next.apiKey) {
+    delete next._encryptedKey;
+  }
   ensureAppDir();
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), "utf8");
+  const toWrite = { ...next };
+  if (toWrite._encryptedKey) {
+    delete toWrite.apiKey;
+  }
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(toWrite, null, 2), "utf8");
   writeConfigToml(next);
+  audit("config.save", Object.keys(patch).join(","));
   return next;
 }
 
@@ -553,9 +613,11 @@ function writeConfigToml(config) {
 }
 
 function publicConfig(config = loadConfig()) {
+  const raw = configApiKey();
   return {
     ...config,
-    apiKey: config.apiKey ? `${config.apiKey.slice(0, 4)}...${config.apiKey.slice(-4)}` : ""
+    _encryptedKey: undefined,
+    apiKey: raw ? `${raw.slice(0, 4)}...${raw.slice(-4)}` : ""
   };
 }
 
@@ -580,6 +642,37 @@ function safeSessionId(id) {
 
 function sessionPath(id) {
   return path.join(sessionDir(), `${safeSessionId(id)}.json`);
+}
+
+function buildSessionSearchIndex() {
+  const index = {};
+  const sessions = fs.readdirSync(sessionDir()).filter(n => n.endsWith(".json"));
+  for (const name of sessions) {
+    try {
+      const data = JSON.parse(fs.readFileSync(path.join(sessionDir(), name), "utf8"));
+      const texts = (Array.isArray(data.messages) ? data.messages : []).map(m => String(m.content || "")).join(" ");
+      const tokens = [...new Set(texts.toLowerCase().split(/[^\w\u4e00-\u9fff]+/).filter(Boolean))];
+      for (const token of tokens) {
+        if (!index[token]) index[token] = [];
+        if (!index[token].includes(data.id)) index[token].push(data.id);
+      }
+    } catch {}
+  }
+  try { fs.writeFileSync(path.join(APP_DIR, "search_index.json"), JSON.stringify(index), "utf8"); } catch {}
+  return index;
+}
+
+function searchSessions(query) {
+  const terms = query.toLowerCase().split(/[^\w\u4e00-\u9fff]+/).filter(Boolean);
+  if (!terms.length) return [];
+  let index = {};
+  try { index = JSON.parse(fs.readFileSync(path.join(APP_DIR, "search_index.json"), "utf8")); } catch { index = buildSessionSearchIndex(); }
+  const matches = terms.map(t => index[t] || []);
+  if (!matches.length) return [];
+  const ids = matches.reduce((a, b) => a.filter(id => b.includes(id)));
+  return ids.slice(0, 20).map(id => {
+    try { return JSON.parse(fs.readFileSync(sessionPath(id), "utf8")); } catch { return null; }
+  }).filter(Boolean).sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
 }
 
 function writeSessionIndex() {
@@ -870,8 +963,7 @@ async function loginStatus() {
 }
 
 async function callDeepSeek({ messages, model }) {
-  const config = loadConfig();
-  const apiKey = process.env.DEEPSEEK_API_KEY || config.apiKey;
+  const apiKey = configApiKey();
   if (!apiKey) {
     throw new Error("缺少 API 密钥。请在设置页填写 DeepSeek API 密钥，或设置 DEEPSEEK_API_KEY。");
   }
@@ -899,6 +991,69 @@ async function callDeepSeek({ messages, model }) {
     reasoningContent: body.choices?.[0]?.message?.reasoning_content || "",
     usage: body.usage || null,
     rawModel: body.model || model || config.model
+  };
+}
+
+async function callDeepSeekStream({ messages, model }, onChunk) {
+  const apiKey = configApiKey();
+  if (!apiKey) {
+    throw new Error("缺少 API 密钥。请在设置页填写 DeepSeek API 密钥，或设置 DEEPSEEK_API_KEY。");
+  }
+  const trimmed = messages.slice(-Number(config.maxContextMessages || 24));
+  const url = `${config.baseUrl}/chat/completions`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: model || config.model,
+      messages: trimmed,
+      temperature: Number(config.temperature ?? 0.2),
+      stream: true
+    })
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`DeepSeek API ${res.status}: ${text.slice(0, 1200)}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullContent = "";
+  let reasoningContent = "";
+  
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (data === "[DONE]") { onChunk({ content: "", done: true }); continue; }
+      try {
+        const parsed = JSON.parse(data);
+        const delta = parsed.choices?.[0]?.delta || {};
+        if (delta.content) {
+          fullContent += delta.content;
+          onChunk({ content: delta.content, fullContent, done: false });
+        }
+        if (delta.reasoning_content) {
+          reasoningContent += delta.reasoning_content;
+        }
+      } catch (e) { /* skip unparseable SSE lines */ }
+    }
+  }
+  onChunk({ done: true, content: "", fullContent });
+  
+  return {
+    content: fullContent,
+    reasoningContent,
+    rawModel: model || config.model,
+    usage: null
   };
 }
 
@@ -1337,6 +1492,42 @@ async function runAgent(event, payload) {
 ipcMain.handle("config:get", () => publicConfig());
 ipcMain.handle("config:save", (_event, patch) => publicConfig(saveConfig(patch)));
 ipcMain.handle("config:path", () => CONFIG_PATH);
+ipcMain.handle("config:home", () => os.homedir());
+ipcMain.handle("config:audit-log", () => {
+  try {
+    if (!fs.existsSync(AUDIT_LOG_PATH)) return [];
+    const lines = fs.readFileSync(AUDIT_LOG_PATH, "utf8").trim().split("\n").filter(Boolean);
+    return lines.slice(-200).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  } catch { return []; }
+});
+
+const DEFAULT_PLUGINS = [
+  ["deepseek-api", "DeepSeek OpenAI-compatible API provider", "enabled", "◎"],
+  ["GitHub", "Triage PRs, issues, CI, and publish flows", "planned", "◈"],
+  ["网页搜索", "搜索网页并整理来源", "计划中", "◎"],
+  ["终端", "按批准策略运行命令", "已禁用", "⌘"],
+  ["工作区文件", "读取、索引并引用项目文件", "计划中", "▱"],
+  ["浏览器", "打开网页并保留会话状态", "计划中", "◉"]
+];
+const DEFAULT_SKILLS = [
+  ["代码审查", "审查变更并给出聚焦修复建议", "内置", "◇"],
+  ["Web CTF", "Web 题目分析与利用流程", "内置", "⌁"],
+  ["文档", "创建和编辑文档产物", "计划中", "▤"],
+  ["表格", "创建和分析工作簿", "计划中", "▦"],
+  ["演示文稿", "构建幻灯片", "计划中", "▧"],
+  ["自动化", "周期检查、提醒和监控", "计划中", "◴"]
+];
+
+ipcMain.handle("config:plugins", () => {
+  const pluginsDir = path.join(APP_DIR, "plugins");
+  const files = fs.readdirSync(pluginsDir).filter(f => f.endsWith(".json"));
+  if (!files.length) return DEFAULT_PLUGINS;
+  const plugins = files.map(f => {
+    try { return JSON.parse(fs.readFileSync(path.join(pluginsDir, f), "utf8")); } catch { return null; }
+  }).filter(Boolean).map(p => [p.name || p.id, p.description || "", p.enabled ? "enabled" : "disabled", p.icon || "◎"]);
+  return plugins.length ? plugins : DEFAULT_PLUGINS;
+});
+ipcMain.handle("config:skills", () => DEFAULT_SKILLS);
 ipcMain.handle("sessions:list", () => listSessions());
 ipcMain.handle("sessions:list-archived", () => listArchivedSessions());
 ipcMain.handle("sessions:save", (_event, sessionData) => {
@@ -1354,18 +1545,21 @@ ipcMain.handle("sessions:save", (_event, sessionData) => {
   };
   fs.writeFileSync(sessionPath(id), JSON.stringify(data, null, 2), "utf8");
   writeSessionIndex();
+  audit("session.save", id);
   return data;
 });
-ipcMain.handle("sessions:archive", (_event, id) => archiveSession(id));
-ipcMain.handle("sessions:restore", (_event, id) => restoreSession(id));
+ipcMain.handle("sessions:archive", (_event, id) => { const r = archiveSession(id); audit("session.archive", id); return r; });
+ipcMain.handle("sessions:restore", (_event, id) => { const r = restoreSession(id); audit("session.restore", id); return r; });
 ipcMain.handle("sessions:delete", (_event, id) => {
   const safeId = safeSessionId(id);
   if (!safeId) throw new Error("会话 ID 无效。");
   const target = sessionPath(safeId);
   if (fs.existsSync(target)) fs.unlinkSync(target);
   writeSessionIndex();
+  audit("session.delete", id);
   return true;
 });
+ipcMain.handle("sessions:search", (_event, query) => searchSessions(query));
 ipcMain.handle("memory:list", () => listMemories());
 ipcMain.handle("memory:save", (_event, memory) => saveMemory(memory));
 ipcMain.handle("memory:delete", (_event, id) => deleteMemory(id));
@@ -1374,11 +1568,148 @@ ipcMain.handle("login:open", () => createLoginWindow());
 ipcMain.handle("login:status", () => loginStatus());
 ipcMain.handle("chat:complete", async (_event, payload) => callDeepSeek(payload));
 ipcMain.handle("agent:run", async (event, payload) => runAgent(event, payload));
+ipcMain.handle("agent:run-stream", async (event, payload) => {
+  const started = Date.now();
+  const config = effectiveConfig(loadConfig());
+  const emit = (stage, detail = "", extra = {}) => {
+    event.sender.send("agent:status", { stage, detail, elapsedMs: Date.now() - started, ...extra });
+  };
+  const userText = payload?.messages?.filter(m => m.role === "user").at(-1)?.content || "";
+  emit("理解任务", "读取用户输入和当前对话上下文");
+  emit("思考框架", "真实目标 → 上下文 → 宿主证据 → 假设/反证 → 执行 → 校验 → 交付", { type: "trace.protocol" });
+  const conversationContext = compactConversationContext(payload?.messages || []);
+  const localTargetText = targetTextForLocalContext(payload?.messages || [], userText);
+  const webContext = await maybeCollectWebContext(userText, emit);
+  const localContext = await maybeCollectLocalContext(localTargetText || userText, emit);
+  const planPrompt = [
+    {
+      role: "system",
+      content: [
+        "你是 Agent Planner。不要输出隐藏思维链，只输出面向用户可审计的思考摘要。",
+        "用户原始请求优先级最高；若用户要求只回答某个固定文本，则计划也必须保持这个约束。",
+        OBJECTIVE_COMPLETION_PROTOCOL,
+        CLAUDE_REASONIX_AGENT_PROTOCOL,
+        VISIBLE_REASONING_PROTOCOL,
+        CTF_RE_EVIDENCE_PROTOCOL,
+        "宿主能力：可以联网抓取网页、搜索公开网页、读写授权文件、运行 PowerShell/终端命令。不要声称不能访问互联网、本地终端、PowerShell 环境变量或本地文件系统；若权限不足，应说明需要切换权限。",
+        "严禁伪造命令输出、文件内容、反汇编、flag、运行结果或工具执行结果。没有宿主提供的证据时，只能说尚未执行尚无证据，不能把计划写成结果。",
+        "CTF/逆向/取证任务必须优先基于宿主提供的确定性分析结果。",
+        "如果宿主文件系统结果里出现多个历史文件，必须选择【最近一次文件目标】或当前用户明确提到的文件；禁止把旧文件结果当新题答案。",
+        "用 JSON 输出，字段为：user_intent, deliverable, known_context, evidence, rejected_assumptions, next_actions, checks, blocked_reason。next_actions 最多 6 条；如果已经能交付结果，blocked_reason 为空。"
+      ].join("\n\n")
+    },
+    {
+      role: "user",
+      content: [conversationContext, `【当前用户请求】\n${userText}`, webContext, localContext].filter(Boolean).join("\n\n")
+    }
+  ];
+  emit("制定计划", `使用 ${config.reasonerModel || "deepseek-reasoner"} 生成可审计计划`, { type: "reasoning.start" });
+  let planText = "";
+  try {
+    const plan = await callDeepSeek({ messages: planPrompt, model: config.reasonerModel || "deepseek-reasoner" });
+    planText = plan.content || "";
+    emit("计划完成", `输入 ${plan.usage?.prompt_tokens ?? "?"}，输出 ${plan.usage?.completion_tokens ?? "?"} tokens`, { type: "reasoning.end", usage: plan.usage });
+    emit("思考摘要", planText.slice(0, 1600), { type: "trace.summary" });
+  } catch (err) {
+    emit("计划降级", "推理模型不可用，切换到直接执行");
+  }
+  emit("执行", `使用 ${payload?.model || config.model || "deepseek-chat"} 流式生成回复`);
+  const finalMessages = [
+    {
+      role: "system",
+      content: [
+        "你是 DeepSeek Windows 的桌面 Agent。",
+        "你运行在用户本机的 DeepSeek Desktop 宿主内.",
+        `当前权限：${config.permissionPreset || "custom"} (${config.sandboxMode || "workspace-write"} / ${config.approvalPolicy || "on-request"})`,
+        OBJECTIVE_COMPLETION_PROTOCOL,
+        CLAUDE_REASONIX_AGENT_PROTOCOL,
+        VISIBLE_REASONING_PROTOCOL,
+        CTF_RE_EVIDENCE_PROTOCOL,
+      ].join("\n")
+    },
+    ...(memoryContext() ? [{ role: "system", content: memoryContext() }] : []),
+    ...(conversationContext ? [{ role: "system", content: conversationContext }] : []),
+    ...(webContext ? [{ role: "system", content: webContext }] : []),
+    ...(localContext ? [{ role: "system", content: localContext }] : []),
+    ...(payload?.messages || []),
+    ...(planText ? [{ role: "system", content: `可审计计划摘要：\n${planText}` }] : [])
+  ];
+  const result = await callDeepSeekStream(
+    { messages: finalMessages, model: payload?.model || config.model },
+    (chunk) => event.sender.send("agent:chunk", chunk)
+  );
+  const usage = cacheStatsFor(finalMessages, result.rawModel, { prompt_tokens: 0, completion_tokens: 0 });
+  emit("用量", `流式完成，模型 ${result.rawModel}`, { type: "usage", usage });
+  const saved = maybeSaveRequestedFile(userText, payload?.messages || [], result.content);
+  if (saved) {
+    emit("文件", `已写入 ${saved.path}`, { type: "tool.file" });
+    result.content = `已保存到本机：${saved.path} 写入大小：${saved.bytes} bytes`;
+  }
+  emit("校验", "检查回复是否为空并整理输出");
+  return {
+    ...result,
+    elapsedMs: Date.now() - started,
+    plan: planText,
+    cache: usage
+  };
+});
+const INDEX_EXTS = new Set([".txt", ".md", ".json", ".jsonl", ".toml", ".yaml", ".yml", ".js", ".jsx", ".ts", ".tsx", ".css", ".html", ".xml", ".py", ".ps1", ".bat", ".cmd", ".rs", ".go", ".java", ".c", ".cpp", ".h", ".hpp", ".cs", ".php", ".rb", ".sql", ".log", ".csv", ".ini", ".cfg", ".env", ".gitignore"]);
+
+function buildWorkspaceIndex(workspace) {
+  const root = path.resolve(workspace);
+  if (!fs.existsSync(root)) return [];
+  const entries = [];
+  try {
+    const walk = (dir, depth = 0) => {
+      if (depth > 5) return;
+      let names;
+      try { names = fs.readdirSync(dir); } catch { return; }
+      for (const name of names) {
+        if (name === "node_modules" || name === ".git" || name === ".deepseek" || name.startsWith(".")) continue;
+        const full = path.join(dir, name);
+        let stat;
+        try { stat = fs.statSync(full); } catch { continue; }
+        if (stat.isDirectory()) walk(full, depth + 1);
+        else if (stat.isFile() && stat.size < 512 * 1024) {
+          const ext = path.extname(name).toLowerCase();
+          if (INDEX_EXTS.has(ext)) {
+            try {
+              const content = fs.readFileSync(full, "utf8").slice(0, 8000);
+              entries.push({ name, path: full, ext, size: stat.size, content: content.slice(0, 2000), mtime: stat.mtimeMs });
+            } catch {}
+          }
+        }
+      }
+    };
+    walk(root);
+  } catch {}
+  return entries.slice(0, 500);
+}
+
+ipcMain.handle("workspace:index", (_event, workspace) => {
+  const config = loadConfig();
+  const root = path.resolve(workspace || config.workspace || "D:\\deepseek");
+  return buildWorkspaceIndex(root);
+});
+ipcMain.handle("workspace:search", (_event, query) => {
+  const config = loadConfig();
+  const root = path.resolve(config.workspace || "D:\\deepseek");
+  const q = query.toLowerCase();
+  const index = buildWorkspaceIndex(root);
+  return index.filter(e => e.name.toLowerCase().includes(q) || e.content.toLowerCase().includes(q)).slice(0, 30).map(e => ({ name: e.name, path: e.path, ext: e.ext, size: e.size }));
+});
+
+function expandHome(dir) {
+  if (typeof dir === "string" && dir.startsWith("~")) {
+    return path.join(os.homedir(), dir.slice(1));
+  }
+  return dir;
+}
 ipcMain.handle("files:list", async (_event, dir) => {
   const config = loadConfig();
   const effective = effectiveConfig(config);
   const root = path.resolve(config.workspace || "D:\\deepseek");
-  const target = path.resolve(dir || root);
+  const target = path.resolve(expandHome(dir || root));
   if (!normalizeInside(target, root) && !(effective.sandboxMode === "danger-full-access" && effective.approvalPolicy === "never")) {
     throw new Error("拒绝列出工作区之外的文件。");
   }
@@ -1444,9 +1775,11 @@ ipcMain.handle("terminal:run", async (_event, command) => new Promise((resolve) 
     /\bcipher\s+\/w\b/i
   ];
   if (blocked.some(pattern => pattern.test(command)) && !isFullAccess(config)) {
+    audit("terminal.blocked", command.slice(0, 200));
     resolve({ code: 126, out: "", err: "已被安全策略拦截。" });
     return;
   }
+  audit("terminal.run", command.slice(0, 200));
   const child = spawn(command, { cwd, shell: true, windowsHide: true });
   let out = "";
   let err = "";

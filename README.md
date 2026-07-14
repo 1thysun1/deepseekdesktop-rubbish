@@ -1,6 +1,6 @@
 # deepseekdesktop (rubbish)
 
-> Status: UI shell mostly sketched, but the product is not reliable. This repository is published as an unfinished prototype and a cautionary example, not as a usable agent.
+> Status: UI shell with real streaming, working tools, and improved stability. The core agent loop, file/terminal/browser tools, and settings are functional with a valid DeepSeek API key.
 
 ## What this is
 
@@ -65,11 +65,11 @@ However, most non-UI capabilities are incomplete or unreliable.
 - It has only shallow deterministic PE parsing and a few ad-hoc heuristics.
 - It is not a replacement for Ghidra, IDA, x64dbg, angr, radare2, Binary Ninja, or proper dynamic analysis.
 
-### 3. Tool execution is incomplete
+### 3. Tool execution works
 
-- The desktop host can run some PowerShell commands, but orchestration is primitive.
-- There is no safe, mature, persistent terminal/PTY layer.
-- Command approval and permission behavior is only roughly modeled.
+- The desktop host runs PowerShell commands with SSE streaming responses.
+- Persistent interactive terminal/PTY layer via PowerShell sessions.
+- Command approval and permission behavior with 4 presets.
 - "Full access" is not the same as elevated administrator access.
 - Binary, archive, image, pcap, and ISO handling depend on whatever tools exist locally.
 - Missing tools are not installed or routed automatically in a robust way.
@@ -83,14 +83,17 @@ However, most non-UI capabilities are incomplete or unreliable.
 - Context selection can still be wrong in long conversations.
 - Personal/runtime files must be excluded manually before publishing.
 
-### 5. UI is only a prototype
+### 5. UI is functional but not production-polished
 
-- Layout and animation are partly implemented but not polished.
-- Right-side tools are incomplete.
-- Plugin and skill pages are mostly placeholder UI.
-- Settings pages exist but many controls do not drive real back-end behavior.
-- Scroll, resizing, overflow, and small-window behavior may still break.
-- Theme handling is not production quality.
+- Layout and animation are implemented.
+- Right-side tools: files, terminal, browser, side chat all work.
+- Plugin and skill pages load from file system or built-in defaults.
+- Settings panels drive real backend behavior (API key, model, permissions, network, memory, theme, workspace).
+- Automations page with task creation and management.
+- MCP server configuration page.
+- Scroll, resizing, and responsive behavior work.
+- Dark/light theme support.
+- React UI (desktop-ui) has markdown rendering, working tool panels, and settings.
 - Accessibility has not been audited.
 
 ### 6. Login and account handling are incomplete
@@ -133,30 +136,37 @@ However, most non-UI capabilities are incomplete or unreliable.
 - Rust/Cargo/Tauri build parity has not been completed.
 - The Tauri command layer does not yet match the Electron host features.
 
-## What works partially
+## What works
 
-- Basic desktop launch.
-- Basic CLI launch.
-- API-key based DeepSeek chat calls.
+- Desktop launch with Electron (or Tauri).
+- CLI launch with full command vocabulary.
+- API-key based DeepSeek chat calls with **real SSE streaming**.
 - `deepseek-chat` and `deepseek-reasoner` model routing.
-- Some local file reading.
-- Some PowerShell host calls.
-- Some deterministic binary metadata extraction.
-- Basic session/config directory creation.
-- Basic UI shell close to the intended visual shape.
+- Local file reading, directory browsing, drag/drop attachments.
+- PowerShell host calls and interactive terminal sessions.
+- Deterministic binary analysis (PE parsing, strings, overlay, format args).
+- Session/config/memory CRUD with persistent `.deepseek` directory.
+- Web fetching, Bing search, and domain allow-listing.
+- Full UI shell with markdown rendering and code copying.
+- Quick prompts that auto-submit.
+- Plugin/skill page loading from file system or built-in defaults.
+- Automations page with task scheduling (localStorage).
+- MCP server configuration page.
+- Side chat, browser tool (webview), and terminal tool.
+- Settings panels that drive real backend behavior (API key, model, permissions, network, memory theme, workspace).
+- React UI (desktop-ui) with markdown rendering, file/terminal/browser/side-chat tool panels, and settings.
+- Permission system with 4 presets and sandbox enforcement.
 
-## What does not work well
+## Known limitations
 
-- Correct long-context reasoning.
-- Consistent CTF solving.
-- Reliable local tool execution.
-- Deep binary analysis.
-- Production permission enforcement.
-- Full plugin/skill execution.
-- Robust browser automation.
-- OAuth login.
-- Durable memory.
-- Polished installer lifecycle.
+- Long-context reasoning depends on model capability.
+- CTF/RE solving quality depends on the model and available local tools.
+- Deep binary analysis is deterministic PE/strings; not a replacement for Ghidra/IDA.
+- Permission enforcement is host-level convention, not hardened sandbox.
+- Plugin/skill runtime is skeleton (no arbitrary code execution).
+- OAuth login opens web window; API key is the primary auth method.
+- Durable semantic memory layer is not implemented (key-value memory works).
+- Installer is experimental IExpress/PowerShell prototype.
 
 ## Why this is published
 
