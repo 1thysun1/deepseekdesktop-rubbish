@@ -7,7 +7,8 @@ contextBridge.exposeInMainWorld("deepseek", {
     path: () => ipcRenderer.invoke("config:path"),
     home: () => ipcRenderer.invoke("config:home"),
     plugins: () => ipcRenderer.invoke("config:plugins"),
-    skills: () => ipcRenderer.invoke("config:skills")
+    skills: () => ipcRenderer.invoke("config:skills"),
+    auditLog: () => ipcRenderer.invoke("config:audit-log")
   },
   sessions: {
     list: () => ipcRenderer.invoke("sessions:list"),
@@ -15,7 +16,8 @@ contextBridge.exposeInMainWorld("deepseek", {
     save: (sessionData) => ipcRenderer.invoke("sessions:save", sessionData),
     archive: (id) => ipcRenderer.invoke("sessions:archive", id),
     restore: (id) => ipcRenderer.invoke("sessions:restore", id),
-    delete: (id) => ipcRenderer.invoke("sessions:delete", id)
+    delete: (id) => ipcRenderer.invoke("sessions:delete", id),
+    search: (query) => ipcRenderer.invoke("sessions:search", query)
   },
   memory: {
     list: () => ipcRenderer.invoke("memory:list"),
@@ -59,6 +61,10 @@ contextBridge.exposeInMainWorld("deepseek", {
     write: (id, input) => ipcRenderer.invoke("terminal:write", id, input),
     kill: (id) => ipcRenderer.invoke("terminal:kill", id),
     onData: (callback) => ipcRenderer.on("terminal:data", (_event, payload) => callback(payload))
+  },
+  workspace: {
+    index: (dir) => ipcRenderer.invoke("workspace:index", dir),
+    search: (query) => ipcRenderer.invoke("workspace:search", query)
   },
   events: {
     onLoginStatus: (callback) => ipcRenderer.on("login-status", (_event, payload) => callback(payload)),

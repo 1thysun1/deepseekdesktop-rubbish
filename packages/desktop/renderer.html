@@ -1124,6 +1124,7 @@
             <button type="button" data-setting-tab="memory">🧠 记忆</button>
             <button type="button" data-setting-tab="mcp">⌁ MCP 服务器</button>
             <button type="button" data-setting-tab="archive">⌫ 已归档对话</button>
+            <button type="button" data-setting-tab="audit">📋 审计日志</button>
           </nav>
           <div class="settings-grid">
             <div class="card" data-setting-panel="general config">
@@ -1227,9 +1228,15 @@
             </div>
             <div class="card" data-setting-panel="archive">
               <h3>已归档对话</h3>
-              <p class="status">侧栏“归档”中可预览和恢复。这里用于检查归档目录与索引。</p>
+              <p class="status">侧栏"归档"中可预览和恢复。这里用于检查归档目录与索引。</p>
               <div class="tools"><button id="refreshArchivedSettings" class="primary">刷新归档</button><button id="openArchiveFolder">打开归档目录</button></div>
               <p id="archiveSettingsStatus" class="status"></p>
+            </div>
+            <div class="card" data-setting-panel="audit">
+              <h3>审计日志</h3>
+              <p class="status">记录所有配置变更、会话操作、终端执行、文件操作等安全相关事件。</p>
+              <div class="tools"><button id="refreshAuditLog" class="primary">刷新</button></div>
+              <div id="auditLogList" style="margin-top:10px;max-height:480px;overflow:auto"></div>
             </div>
           </div>
           </div>
@@ -2752,6 +2759,24 @@
     }
     $("saveAutoTask").onclick = saveAutoTask;
     $("refreshAutoTasks").onclick = renderAutoTasks;
+    async function refreshAuditLog() {
+      const list = $("auditLogList");
+      if (!list) return;
+      try {
+        const entries = await window.deepseek.config.auditLog();
+        list.innerHTML = entries.length ? "" : "<div class=\"status\">暂无审计记录。</div>";
+        for (const e of entries.slice(-100).reverse()) {
+          const row = document.createElement("div");
+          row.className = "memory-item";
+          row.style.fontSize = "12px";
+          row.innerHTML = `<strong></strong><p></p>`;
+          row.querySelector("strong").textContent = `${e.a || "?"} · ${(e.t || "").slice(0, 19).replace("T", " ")}`;
+          row.querySelector("p").textContent = (e.d || "").slice(0, 120);
+          list.appendChild(row);
+        }
+      } catch {}
+    }
+    $("refreshAuditLog").onclick = refreshAuditLog;
     $("filesAction").onclick = () => loadFiles();
     $("contextAction").onclick = createContextTool;
     $("sideChatAction").onclick = createSideChatTool;
